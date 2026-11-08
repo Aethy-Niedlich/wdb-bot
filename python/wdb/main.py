@@ -6,6 +6,7 @@ import numpy as np
 from wdb.policy import ActorCritic
 from wdb.vec_env import VecEnv
 from wdb.imitation import load_replay, train_bc
+from wdb.league import League
 
 def main():
     parser = argparse.ArgumentParser()
@@ -29,6 +30,9 @@ def main():
 
     # 2. Reinforcement Learning (PPO)
     optimizer = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    
+    # Initialize the League
+    league = League(policy, max_past_models=10)
 
     rollout_steps = 128
     epochs = 4
@@ -40,7 +44,12 @@ def main():
     obs = torch.as_tensor(venv.obs, device=device)
     
     print("Starting PPO training loop...")
-    for update in range(1, 11):  
+    for update in range(1, 21):  
+        
+        # --- LEAGUE SNAPSHOT LOGIC ---
+        if update > 1 and update % 5 == 0:
+            league.snapshot()
+
         obs_buf, act_buf, logp_buf, val_buf, rew_buf, done_buf = [], [], [], [], [], []
         
         for _ in range(rollout_steps):
@@ -97,7 +106,7 @@ def main():
                 nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                 optimizer.step()
                 
-        print(f"Update {update}/10 | Loss: {loss.item():.4f} | Value Loss: {v_loss.item():.4f}")
+        print(f"Update {update}/20 | Loss: {loss.item():.4f} | Value Loss: {v_loss.item():.4f}")
 
     print("Saving final model...")
     torch.save(policy.state_dict(), "latest.pt")

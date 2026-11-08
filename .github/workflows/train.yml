@@ -2,10 +2,6 @@ name: train
 
 on:
   workflow_dispatch:
-    inputs:
-      steps:
-        description: 'Rollout steps'
-        default: '2000'
   schedule:
     - cron: '0 3 * * *'   # nightly short run
 
@@ -15,23 +11,31 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      
       - uses: dtolnay/rust-toolchain@stable
+      
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install maturin torch numpy pytest
-      - run: maturin develop --manifest-path rust/Cargo.toml
-
-      - name: Run PPO training (short)
-        env:
-          STEPS: ${{ github.event.inputs.steps || '2000' }}
+          
+      - name: Install dependencies and build Rust
         run: |
-          python -m wdb.main --steps "$STEPS" \
-            --checkpoint-dir checkpoints/
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin numpy pytest
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # Build and install the Rust extension directly via pip
+          pip install ./python
+          
+      - name: Run PPO training
+        run: |
+          source .venv/bin/activate
+          cd python
+          python -m wdb.main
 
-      - name: Upload latest checkpoint only (keeps quota small)
+      - name: Upload latest checkpoint
         uses: actions/upload-artifact@v4
         with:
           name: checkpoint-${{ github.run_id }}
-          path: checkpoints/latest.pt
+          path: python/latest.pt
           retention-days: 3
