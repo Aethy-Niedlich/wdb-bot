@@ -1,5 +1,5 @@
 from wdb._engine import RustEnv
 
-class CloudWDBEnv(RustEnv):
-    """Same Env protocol as MockWDBEnv — swap in one line in VecEnv."""
-    pass
+# Rust PyO3 classes are final by default and cannot be subclassed in Python.
+# Since we don't need to add methods yet, we just create an alias.
+CloudWDBEnv = RustEnv
