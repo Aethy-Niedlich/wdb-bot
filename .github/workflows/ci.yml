@@ -17,25 +17,30 @@ jobs:
     needs: rust-tests
     steps:
       - uses: actions/checkout@v4
+      
       - uses: dtolnay/rust-toolchain@stable
+      
+      # Install Node.js for the JS physics engine
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           
+      - name: Generate Reference Traces via JS
+        run: node scripts/record_reference.js
+        
       - name: Create Virtual Environment
         run: python -m venv .venv
         
-      - name: Install Dependencies
+      - name: Install Dependencies and Build Rust
         run: |
           source .venv/bin/activate
           pip install maturin pytest numpy
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          
-      - name: Build Rust Extension
-        run: |
-          source .venv/bin/activate
-          cd python
-          maturin develop
+          pip install ./python
           
       - name: Run Parity Test
         run: |
