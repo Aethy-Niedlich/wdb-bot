@@ -48,13 +48,17 @@ impl RustEnv {
 
 impl GameState {
     fn to_py(&self, py: Python) -> PyObject {
-        // PyO3 0.22 API requires new_bound
         let d = PyDict::new_bound(py); 
         d.set_item("t", self.t).unwrap();
         d.set_item("x", self.x).unwrap();
         d.set_item("y", self.y).unwrap();
         d.set_item("vx", self.vx).unwrap();
         d.set_item("vy", self.vy).unwrap();
+        d.set_item("force_x", self.force_x).unwrap();
+        d.set_item("force_y", self.force_y).unwrap();
+        d.set_item("mass", self.mass).unwrap();
+        d.set_item("inv_mass", self.inv_mass).unwrap();
+        d.set_item("linear_damping", self.linear_damping).unwrap();
         d.into()
     }
 }

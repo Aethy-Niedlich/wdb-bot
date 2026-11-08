@@ -1,26 +1,45 @@
-// scripts/record_reference.js
 const fs = require('fs');
 
-// Later, this will be: const { step, reset } = require('./bonk_physics.js');
-// For now, we mock the JS engine to prove the harness works.
+function step(state, action) {
+    let nextState = JSON.parse(JSON.stringify(state)); // deep copy
+    const dt = 1.0 / 60.0;
+    const gravity_x = 0.0;
+    const gravity_y = -10.0;
 
-function mockStep(state, action) {
-    // Exactly the same math as our Rust dummy engine
-    let nextState = { ...state };
-    let move = action[0] - 1;
-    let jump = action[1] - 1;
+    // Inputs
+    let move_dir = action[0] - 1;
+    let jump_dir = action[1] - 1;
     
-    nextState.vx += move * 0.1;
-    nextState.vy += jump * 0.1;
-    nextState.x += nextState.vx;
-    nextState.y += nextState.vy;
+    nextState.force_x = move_dir * 50.0;
+    nextState.force_y = jump_dir * 50.0;
+
+    // Box2D Integration
+    nextState.vx += dt * (gravity_x + nextState.inv_mass * nextState.force_x);
+    nextState.vy += dt * (gravity_y + nextState.inv_mass * nextState.force_y);
+    
+    // Damping
+    let damping = Math.max(0.0, Math.min(1.0, 1.0 - dt * nextState.linear_damping));
+    nextState.vx *= damping;
+    nextState.vy *= damping;
+
+    // Update position
+    nextState.x += nextState.vx * dt;
+    nextState.y += nextState.vy * dt;
+
+    // Clear forces
+    nextState.force_x = 0.0;
+    nextState.force_y = 0.0;
+
     nextState.t += 1;
-    
     return nextState;
 }
 
 function generateTraces(numFrames = 100) {
-    let state = { t: 0, x: 0.0, y: 0.0, vx: 0.0, vy: 0.0 };
+    let state = { 
+        t: 0, x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, 
+        force_x: 0.0, force_y: 0.0, 
+        mass: 1.0, inv_mass: 1.0, linear_damping: 0.1 
+    };
     let traces = [];
 
     for (let i = 0; i < numFrames; i++) {
@@ -30,7 +49,7 @@ function generateTraces(numFrames = 100) {
             Math.floor(Math.random() * 2)
         ];
 
-        let nextState = mockStep(state, action);
+        let nextState = step(state, action);
 
         traces.push({
             seed: 0,
