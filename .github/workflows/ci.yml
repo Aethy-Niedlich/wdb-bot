@@ -21,6 +21,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install maturin pytest
-      - run: maturin develop --manifest-path rust/Cargo.toml
-      - run: pytest python/tests/test_parity.py -q
+          
+      - name: Create Virtual Environment
+        run: python -m venv .venv
+        
+      - name: Install Dependencies
+        run: |
+          source .venv/bin/activate
+          pip install maturin pytest numpy
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          
+      - name: Build Rust Extension
+        run: |
+          source .venv/bin/activate
+          cd python
+          maturin develop
+          
+      - name: Run Parity Test
+        run: |
+          source .venv/bin/activate
+          cd python
+          pytest tests/test_parity.py -q
