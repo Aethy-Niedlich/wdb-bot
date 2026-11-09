@@ -63,6 +63,19 @@ impl GameState {
         d.set_item("map_radius", self.map_radius).unwrap();
         d.set_item("map_center_x", self.map_center_x).unwrap();
         d.set_item("map_center_y", self.map_center_y).unwrap();
+        d.set_item("terminated", self.terminated).unwrap();
+        d.set_item("truncated", self.truncated).unwrap();
+        
+        let ball_dict = PyDict::new_bound(py);
+        ball_dict.set_item("x", self.ball.x).unwrap();
+        ball_dict.set_item("y", self.ball.y).unwrap();
+        ball_dict.set_item("vx", self.ball.vx).unwrap();
+        ball_dict.set_item("vy", self.ball.vy).unwrap();
+        ball_dict.set_item("radius", self.ball.radius).unwrap();
+        ball_dict.set_item("exists", self.ball.exists).unwrap();
+        d.set_item("ball", ball_dict).unwrap();
+        d.set_item("goal_x", self.goal_x).unwrap();
+        d.set_item("goal_y", self.goal_y).unwrap();
         
         let p1_dict = PyDict::new_bound(py);
         p1_dict.set_item("x", self.p1.x).unwrap();
