@@ -24,16 +24,12 @@ impl RustEnv {
 
     fn step(&mut self, action1: Vec<i8>, action2: Vec<i8>) -> PyResult<(PyObject, f64, bool)> {
         let inputs1 = Inputs {
-            move_dir: action1[0] - 1,
-            jump_dir: action1[1] - 1,
-            heavy: action1[2] == 1,
-            grapple: action1[3] == 1,
+            move_dir: action1[0] - 1, jump_dir: action1[1] - 1,
+            heavy: action1[2] == 1, grapple: action1[3] == 1,
         };
         let inputs2 = Inputs {
-            move_dir: action2[0] - 1,
-            jump_dir: action2[1] - 1,
-            heavy: action2[2] == 1,
-            grapple: action2[3] == 1,
+            move_dir: action2[0] - 1, jump_dir: action2[1] - 1,
+            heavy: action2[2] == 1, grapple: action2[3] == 1,
         };
         
         step(&mut self.state, &inputs1, &inputs2);
@@ -46,20 +42,15 @@ impl RustEnv {
     fn step_json(&mut self, state_json: &str, action1: Vec<i8>, action2: Vec<i8>) -> PyResult<String> {
         let mut s: GameState = serde_json::from_str(state_json).unwrap();
         let inputs1 = Inputs {
-            move_dir: action1[0] - 1,
-            jump_dir: action1[1] - 1,
-            heavy: action1[2] == 1,
-            grapple: action1[3] == 1,
+            move_dir: action1[0] - 1, jump_dir: action1[1] - 1,
+            heavy: action1[2] == 1, grapple: action1[3] == 1,
         };
         let inputs2 = Inputs {
-            move_dir: action2[0] - 1,
-            jump_dir: action2[1] - 1,
-            heavy: action2[2] == 1,
-            grapple: action2[3] == 1,
+            move_dir: action2[0] - 1, jump_dir: action2[1] - 1,
+            heavy: action2[2] == 1, grapple: action2[3] == 1,
         };
         
         step(&mut s, &inputs1, &inputs2);
-        
         Ok(serde_json::to_string(&s).unwrap())
     }
 }
@@ -69,6 +60,9 @@ impl GameState {
         let d = PyDict::new_bound(py); 
         d.set_item("t", self.t).unwrap();
         d.set_item("current_reward", self.current_reward).unwrap();
+        d.set_item("map_radius", self.map_radius).unwrap();
+        d.set_item("map_center_x", self.map_center_x).unwrap();
+        d.set_item("map_center_y", self.map_center_y).unwrap();
         
         let p1_dict = PyDict::new_bound(py);
         p1_dict.set_item("x", self.p1.x).unwrap();

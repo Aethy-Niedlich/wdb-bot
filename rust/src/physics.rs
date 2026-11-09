@@ -30,15 +30,24 @@ pub struct GameState {
     pub p1: Player,
     pub p2: Player,
     pub current_reward: f64,
+    // NEW: Map data for dynamic reward calculation
+    pub map_radius: f64,
+    pub map_center_x: f64,
+    pub map_center_y: f64,
 }
 
 impl GameState {
     pub fn reset(_seed: u64) -> Self {
+        // In Phase 3, these will be calculated from the JSON map polygons.
+        // For our Phase 2 mock map, the walls span x:[-10,10] and y:[-5,0].
         Self { 
             t: 0, 
             p1: Player::new(-2.0, 0.0),
             p2: Player::new(2.0, 0.0),
             current_reward: 0.0,
+            map_radius: 10.0,    // Claude's R
+            map_center_x: 0.0,   // Claude's c_x
+            map_center_y: -2.5,  // Claude's c_y
         }
     }
     pub fn reward(&self) -> f64 { self.current_reward }
@@ -50,12 +59,14 @@ pub struct Inputs { pub move_dir: i8, pub jump_dir: i8, pub heavy: bool, pub gra
 
 pub struct Wall { pub x1: f64, pub y1: f64, pub x2: f64, pub y2: f64 }
 
-fn calculate_phi(p: &Player) -> f64 {
-    let r = 10.0; let w_c = 1.0; let w_v = 0.5;
-    let d = (p.x * p.x + p.y * p.y).sqrt();
+fn calculate_phi(p: &Player, cx: f64, cy: f64, r: f64) -> f64 {
+    let w_c = 1.0; let w_v = 0.5;
+    let dx = p.x - cx;
+    let dy = p.y - cy;
+    let d = (dx * dx + dy * dy).sqrt();
     let m = (r - d) / r;
-    let ux = if d > 0.0 { -p.x / d } else { 0.0 };
-    let uy = if d > 0.0 { -p.y / d } else { 0.0 };
+    let ux = if d > 0.0 { -dx / d } else { 0.0 };
+    let uy = if d > 0.0 { -dy / d } else { 0.0 };
     let v_mag = (p.vx * p.vx + p.vy * p.vy).sqrt();
     let v_hat_x = if v_mag > 0.0 { p.vx / v_mag } else { 0.0 };
     let v_hat_y = if v_mag > 0.0 { p.vy / v_mag } else { 0.0 };
@@ -180,7 +191,9 @@ fn resolve_grapple(p: &mut Player, inputs: &Inputs, walls: &Vec<Wall>) {
 
 pub fn step(state: &mut GameState, inputs1: &Inputs, inputs2: &Inputs) {
     let dt = 1.0 / 60.0;
-    let phi_t = calculate_phi(&state.p1);
+    
+    // 1. Capture potential BEFORE update
+    let phi_t = calculate_phi(&state.p1, state.map_center_x, state.map_center_y, state.map_radius);
 
     integrate_player(&mut state.p1, inputs1, dt);
     integrate_player(&mut state.p2, inputs2, dt);
@@ -227,13 +240,21 @@ pub fn step(state: &mut GameState, inputs1: &Inputs, inputs2: &Inputs) {
     }
 
     // --- CLAUDE'S REWARD LOGIC ---
-    if state.p1.y < -10.0 { state.p1.alive = false; }
-    if state.p2.y < -10.0 { state.p2.alive = false; }
+    // Use dynamic map bounds for kill plane
+    let kill_y = state.map_center_y - state.map_radius;
+    if state.p1.y < kill_y { state.p1.alive = false; }
+    if state.p2.y < kill_y { state.p2.alive = false; }
 
-    let phi_next = calculate_phi(&state.p1);
-    let shaping = 0.99 * phi_next - phi_t;
+    // Claude's Caution: Potential at terminal states = 0
+    let phi_next = if !state.p1.alive || !state.p2.alive {
+        0.0
+    } else {
+        calculate_phi(&state.p1, state.map_center_x, state.map_center_y, state.map_radius)
+    };
     
+    let shaping = 0.99 * phi_next - phi_t;
     let terminal = if !state.p1.alive { -5.0 } else if !state.p2.alive { 5.0 } else { 0.0 };
+    
     state.current_reward = 0.01 + shaping + terminal;
 
     state.t += 1;
