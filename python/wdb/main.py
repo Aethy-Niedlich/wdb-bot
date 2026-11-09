@@ -22,10 +22,7 @@ def main():
     if args.replay and os.path.exists(args.replay):
         obs_np, act_np = load_replay(args.replay)
         policy = train_bc(policy, obs_np, act_np, device, epochs=5)
-        torch.save(policy.state_dict(), "bc_pretrained.pt")
         print("BC Pretraining complete. Starting RL fine-tuning...\n")
-    else:
-        print("No replay data provided. Starting RL from scratch...\n")
 
     optimizer = torch.optim.Adam(policy.parameters(), lr=3e-4)
     league = League(policy, max_past_models=10)
@@ -48,8 +45,6 @@ def main():
         
         for _ in range(rollout_steps):
             actions_np, logp_np, value_np = policy.act(obs)
-            
-            # --- THE FIX: Convert to Tensors immediately ---
             actions = torch.as_tensor(actions_np, device=device)
             logp = torch.as_tensor(logp_np, device=device)
             value = torch.as_tensor(value_np, device=device)
@@ -83,8 +78,14 @@ def main():
         logp_flat = torch.stack(logp_buf).reshape(-1)
         adv_flat = adv_buf.reshape(-1)
         ret_flat = returns.reshape(-1)
+        val_flat = torch.stack(val_buf).reshape(-1) # For explained variance
         
         adv_flat = (adv_flat - adv_flat.mean()) / (adv_flat.std() + 1e-8)
+        
+        # --- CLAUDE'S METRICS ---
+        var_y = torch.var(ret_flat)
+        explained_var = 1 - torch.var(ret_flat - val_flat) / (var_y + 1e-8)
+        clip_frac_sum = 0.0
         
         for _ in range(epochs):
             indices = np.random.permutation(rollout_steps * venv.n)
@@ -93,6 +94,9 @@ def main():
                 
                 logp, entropy, val = policy.evaluate(obs_flat[mb_idx], act_flat[mb_idx])
                 ratio = torch.exp(logp - logp_flat[mb_idx])
+                
+                # Track clip fraction
+                clip_frac_sum += (torch.abs(ratio - 1.0) > clip_eps).float().mean().item()
                 
                 s1 = ratio * adv_flat[mb_idx]
                 s2 = torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * adv_flat[mb_idx]
@@ -105,12 +109,22 @@ def main():
                 loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                 optimizer.step()
+        
+        clip_frac = clip_frac_sum / (epochs * (rollout_steps * venv.n // batch_size))
                 
-        print(f"Update {update}/20 | Loss: {loss.item():.4f} | Value Loss: {v_loss.item():.4f}")
+        print(f"Update {update}/20 | Loss: {loss.item():.4f} | V-Loss: {v_loss.item():.4f} | ExpVar: {explained_var.item():.2f} | Clip: {clip_frac:.2f}")
 
-    print("Saving final model...")
-    torch.save(policy.state_dict(), "latest.pt")
+    print("Saving final model and normalizer stats...")
+    checkpoint = {
+        "model_state": policy.state_dict(),
+        "obs_mean": venv.rms.mean,
+        "obs_var": venv.rms.var
+    }
+    torch.save(checkpoint, "latest.pt")
     print("Done!")
+    
+    # Print Claude's Observation Check
+    venv.print_obs_check()
 
 if __name__ == "__main__":
     main()
