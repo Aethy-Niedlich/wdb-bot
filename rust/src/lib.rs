@@ -59,6 +59,12 @@ impl GameState {
         d.set_item("mass", self.mass).unwrap();
         d.set_item("inv_mass", self.inv_mass).unwrap();
         d.set_item("linear_damping", self.linear_damping).unwrap();
+        d.set_item("angle", self.angle).unwrap();
+        d.set_item("angular_velocity", self.angular_velocity).unwrap();
+        d.set_item("torque", self.torque).unwrap();
+        d.set_item("inertia", self.inertia).unwrap();
+        d.set_item("inv_inertia", self.inv_inertia).unwrap();
+        d.set_item("angular_damping", self.angular_damping).unwrap();
         d.into()
     }
 }
