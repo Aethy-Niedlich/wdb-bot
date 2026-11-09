@@ -10,5 +10,5 @@ dependencies = ["torch", "numpy"]
 
 [tool.maturin]
 manifest-path = "../rust/Cargo.toml"
-module-name = "wdb._engine"
+module-name = "wdb.wdb_engine"
 features = ["pyo3/extension-module"]

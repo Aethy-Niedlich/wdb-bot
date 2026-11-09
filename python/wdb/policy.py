@@ -2,37 +2,36 @@ import torch
 import torch.nn as nn
 
 class ActorCritic(nn.Module):
-    def __init__(self, obs_dim=5, hidden=128):
+    def __init__(self, obs_dim: int, action_dims=(3,3,2,2), hidden=512):
         super().__init__()
-        # Shared trunk
+        self.action_dims = action_dims
         self.trunk = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.Tanh(),
-            nn.Linear(hidden, hidden),
-            nn.Tanh(),
+            nn.Linear(obs_dim, hidden), nn.LayerNorm(hidden), nn.SiLU(),
+            nn.Linear(hidden, hidden), nn.SiLU(),
+            nn.Linear(hidden, hidden), nn.SiLU(),
         )
-        # Actor heads for [move, jump, heavy]
-        self.actor_heads = nn.ModuleList([nn.Linear(hidden, 3) for _ in range(3)])
-        # Critic head
+        # CHANGED: 4 heads now
+        self.actor_heads = nn.ModuleList([nn.Linear(hidden, d) for d in action_dims])
         self.critic = nn.Linear(hidden, 1)
 
-    def forward(self, x):
-        h = self.trunk(x)
+    def forward(self, obs):
+        h = self.trunk(obs)
         logits = [head(h) for head in self.actor_heads]
-        value = self.critic(h)
+        value = self.critic(h).squeeze(-1)
         return logits, value
 
     @torch.no_grad()
-    def act(self, x):
-        logits, value = self.forward(x)
+    def act(self, obs, deterministic=False):
+        logits, value = self.forward(obs)
         dists = [torch.distributions.Categorical(logits=l) for l in logits]
-        actions = torch.stack([d.sample() for d in dists], dim=-1)
+        actions = torch.stack(
+            [d.probs.argmax(-1) if deterministic else d.sample() for d in dists], dim=-1)
         logp = sum(d.log_prob(actions[:, i]) for i, d in enumerate(dists))
-        return actions, logp, value.squeeze(-1)
+        return actions.cpu().numpy(), logp.cpu().numpy(), value.cpu().numpy()
 
-    def evaluate(self, x, actions):
-        logits, value = self.forward(x)
+    def evaluate(self, obs, actions):
+        logits, value = self.forward(obs)
         dists = [torch.distributions.Categorical(logits=l) for l in logits]
         logp = sum(d.log_prob(actions[:, i]) for i, d in enumerate(dists))
         entropy = sum(d.entropy() for d in dists)
-        return logp, entropy, value.squeeze(-1)
+        return logp, entropy, value

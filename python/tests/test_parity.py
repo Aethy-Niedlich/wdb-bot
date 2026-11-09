@@ -2,7 +2,7 @@ import json
 import os
 import math
 import pytest
-from wdb._engine import RustEnv
+from wdb.wdb_engine import RustEnv
 
 # Resolve path to wdb-bot/reference/frames.jsonl
 REF_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "reference", "frames.jsonl")

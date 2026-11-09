@@ -19,7 +19,6 @@ def main():
     venv = VecEnv(n_envs=16, seed=42)
     policy = ActorCritic(obs_dim=venv.obs_dim).to(device)
 
-    # 1. Imitation Learning (Optional)
     if args.replay and os.path.exists(args.replay):
         obs_np, act_np = load_replay(args.replay)
         policy = train_bc(policy, obs_np, act_np, device, epochs=5)
@@ -28,10 +27,7 @@ def main():
     else:
         print("No replay data provided. Starting RL from scratch...\n")
 
-    # 2. Reinforcement Learning (PPO)
     optimizer = torch.optim.Adam(policy.parameters(), lr=3e-4)
-    
-    # Initialize the League
     league = League(policy, max_past_models=10)
 
     rollout_steps = 128
@@ -45,23 +41,27 @@ def main():
     
     print("Starting PPO training loop...")
     for update in range(1, 21):  
-        
-        # --- LEAGUE SNAPSHOT LOGIC ---
         if update > 1 and update % 5 == 0:
             league.snapshot()
 
         obs_buf, act_buf, logp_buf, val_buf, rew_buf, done_buf = [], [], [], [], [], []
         
         for _ in range(rollout_steps):
-            actions, logp, value = policy.act(obs)
-            obs_np, rewards, dones = venv.step(actions.cpu().numpy())
+            actions_np, logp_np, value_np = policy.act(obs)
+            
+            # --- THE FIX: Convert to Tensors immediately ---
+            actions = torch.as_tensor(actions_np, device=device)
+            logp = torch.as_tensor(logp_np, device=device)
+            value = torch.as_tensor(value_np, device=device)
+            
+            obs_np, rewards, dones = venv.step(actions_np)
             
             obs_buf.append(obs)
             act_buf.append(actions)
             logp_buf.append(logp)
             val_buf.append(value)
-            rew_buf.append(torch.as_tensor(rewards, device=device))
-            done_buf.append(torch.as_tensor(dones, device=device))
+            rew_buf.append(torch.as_tensor(rewards, device=device, dtype=torch.float32))
+            done_buf.append(torch.as_tensor(dones, device=device, dtype=torch.float32))
             
             obs = torch.as_tensor(obs_np, device=device)
             
@@ -79,7 +79,7 @@ def main():
             returns = adv_buf + torch.stack(val_buf)
             
         obs_flat = torch.stack(obs_buf).reshape(-1, venv.obs_dim)
-        act_flat = torch.stack(act_buf).reshape(-1, 3)
+        act_flat = torch.stack(act_buf).reshape(-1, 4)
         logp_flat = torch.stack(logp_buf).reshape(-1)
         adv_flat = adv_buf.reshape(-1)
         ret_flat = returns.reshape(-1)
