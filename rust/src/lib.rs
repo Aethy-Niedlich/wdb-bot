@@ -27,11 +27,13 @@ impl RustEnv {
             move_dir: action1[0] - 1,
             jump_dir: action1[1] - 1,
             heavy: action1[2] == 1,
+            grapple: action1[3] == 1,
         };
         let inputs2 = Inputs {
             move_dir: action2[0] - 1,
             jump_dir: action2[1] - 1,
             heavy: action2[2] == 1,
+            grapple: action2[3] == 1,
         };
         
         step(&mut self.state, &inputs1, &inputs2);
@@ -47,11 +49,13 @@ impl RustEnv {
             move_dir: action1[0] - 1,
             jump_dir: action1[1] - 1,
             heavy: action1[2] == 1,
+            grapple: action1[3] == 1,
         };
         let inputs2 = Inputs {
             move_dir: action2[0] - 1,
             jump_dir: action2[1] - 1,
             heavy: action2[2] == 1,
+            grapple: action2[3] == 1,
         };
         
         step(&mut s, &inputs1, &inputs2);
@@ -64,6 +68,7 @@ impl GameState {
     fn to_py(&self, py: Python) -> PyObject {
         let d = PyDict::new_bound(py); 
         d.set_item("t", self.t).unwrap();
+        d.set_item("current_reward", self.current_reward).unwrap();
         
         let p1_dict = PyDict::new_bound(py);
         p1_dict.set_item("x", self.p1.x).unwrap();
@@ -83,6 +88,10 @@ impl GameState {
         p1_dict.set_item("angular_damping", self.p1.angular_damping).unwrap();
         p1_dict.set_item("radius", self.p1.radius).unwrap();
         p1_dict.set_item("alive", self.p1.alive).unwrap();
+        p1_dict.set_item("grapple_attached", self.p1.grapple_attached).unwrap();
+        p1_dict.set_item("anchor_x", self.p1.anchor_x).unwrap();
+        p1_dict.set_item("anchor_y", self.p1.anchor_y).unwrap();
+        p1_dict.set_item("rope_length", self.p1.rope_length).unwrap();
 
         let p2_dict = PyDict::new_bound(py);
         p2_dict.set_item("x", self.p2.x).unwrap();
@@ -102,6 +111,10 @@ impl GameState {
         p2_dict.set_item("angular_damping", self.p2.angular_damping).unwrap();
         p2_dict.set_item("radius", self.p2.radius).unwrap();
         p2_dict.set_item("alive", self.p2.alive).unwrap();
+        p2_dict.set_item("grapple_attached", self.p2.grapple_attached).unwrap();
+        p2_dict.set_item("anchor_x", self.p2.anchor_x).unwrap();
+        p2_dict.set_item("anchor_y", self.p2.anchor_y).unwrap();
+        p2_dict.set_item("rope_length", self.p2.rope_length).unwrap();
 
         d.set_item("p1", p1_dict).unwrap();
         d.set_item("p2", p2_dict).unwrap();
@@ -110,7 +123,7 @@ impl GameState {
 }
 
 #[pymodule]
-fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn wdb_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustEnv>()?;
     Ok(())
 }
