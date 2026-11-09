@@ -1,97 +1,151 @@
 const fs = require('fs');
 
-function step(state, action) {
-    let nextState = JSON.parse(JSON.stringify(state)); // deep copy
-    const dt = 1.0 / 60.0;
-    const gravity_x = 0.0;
-    const gravity_y = -10.0;
-
-    // Inputs
+function integratePlayer(p, action, dt) {
     let move_dir = action[0] - 1;
     let jump_dir = action[1] - 1;
     
-    nextState.force_x = move_dir * 50.0;
-    nextState.force_y = jump_dir * 50.0;
+    p.force_x = move_dir * 50.0;
+    p.force_y = jump_dir * 50.0;
 
-     // Box2D Integration (Linear)
-    nextState.vx += dt * (gravity_x + nextState.inv_mass * nextState.force_x);
-    nextState.vy += dt * (gravity_y + nextState.inv_mass * nextState.force_y);
+    p.vx += dt * (p.inv_mass * p.force_x);
+    p.vy += dt * (-10.0 + p.inv_mass * p.force_y);
+    p.angular_velocity += dt * p.inv_inertia * p.torque;
     
-    // Box2D Integration (Angular)
-    nextState.angular_velocity += dt * nextState.inv_inertia * nextState.torque;
-    
-    // Damping (Air resistance)
-    let damp = Math.max(0.0, Math.min(1.0, 1.0 - dt * nextState.linear_damping));
-    let ang_damp = Math.max(0.0, Math.min(1.0, 1.0 - dt * nextState.angular_damping));
-    nextState.vx *= damp;
-    nextState.vy *= damp;
-    nextState.angular_velocity *= ang_damp;
+    let damp = Math.max(0.0, Math.min(1.0, 1.0 - dt * p.linear_damping));
+    let ang_damp = Math.max(0.0, Math.min(1.0, 1.0 - dt * p.angular_damping));
+    p.vx *= damp;
+    p.vy *= damp;
+    p.angular_velocity *= ang_damp;
 
-    // Update position
-    nextState.x += nextState.vx * dt;
-    nextState.y += nextState.vy * dt;
-    nextState.angle += nextState.angular_velocity * dt;
-    
-    // 4. SIMPLIFIED COLLISION (The Floor)
-    const radius = 0.5;
-    const floor_y = -5.0;
-    
-    if (nextState.y - radius < floor_y) {
-        nextState.y = floor_y + radius;
-        let dv_y = nextState.vy;
-        let restitution = 0.2;
-        let normal_mass = 1.0 / nextState.inv_mass;
-        let vn = dv_y;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.angle += p.angular_velocity * dt;
+
+    p.force_x = 0.0;
+    p.force_y = 0.0;
+    p.torque = 0.0;
+}
+
+function resolveWallCollision(p, walls) {
+    for (let wall of walls) {
+        let ab_x = wall.x2 - wall.x1;
+        let ab_y = wall.y2 - wall.y1;
+        let ap_x = p.x - wall.x1;
+        let ap_y = p.y - wall.y1;
         
-        if (vn < 0.0) {
-            let lambda = -normal_mass * (1.0 + restitution) * vn;
-            nextState.vy += nextState.inv_mass * lambda;
+        let ab_len_sq = ab_x * ab_x + ab_y * ab_y;
+        let t = (ap_x * ab_x + ap_y * ab_y) / ab_len_sq;
+        t = Math.max(0.0, Math.min(1.0, t));
+        
+        let closest_x = wall.x1 + t * ab_x;
+        let closest_y = wall.y1 + t * ab_y;
+        
+        let dx = p.x - closest_x;
+        let dy = p.y - closest_y;
+        let dist_sq = dx * dx + dy * dy;
+        
+        if (dist_sq < p.radius * p.radius) {
+            let dist = Math.sqrt(dist_sq);
+            let nx = dist > 0.0 ? dx / dist : 0.0;
+            let ny = dist > 0.0 ? dy / dist : 1.0;
+            
+            let penetration = p.radius - dist;
+            p.x += nx * penetration;
+            p.y += ny * penetration;
+            
+            let vn = p.vx * nx + p.vy * ny;
+            if (vn < 0.0) {
+                let lambda = -p.inv_mass * (1.0 + 0.2) * vn;
+                p.vx += p.inv_mass * lambda * nx;
+                p.vy += p.inv_mass * lambda * ny;
+                
+                let vt = p.vx * ny - p.vy * nx;
+                let max_friction = 0.3 * Math.abs(lambda);
+                let friction_impulse = -vt / p.inv_mass;
+                let clamped_friction = Math.max(-max_friction, Math.min(max_friction, friction_impulse));
+                
+                p.vx += p.inv_mass * clamped_friction * ny;
+                p.vy += p.inv_mass * clamped_friction * -nx;
+            }
         }
-
-        let friction = 0.3;
-        let tangent_mass = 1.0 / nextState.inv_mass;
-        let vt = nextState.vx;
-        let max_friction = friction * Math.abs(normal_mass * -vn);
-        let friction_impulse = -tangent_mass * vt;
-        friction_impulse = Math.max(-max_friction, Math.min(max_friction, friction_impulse));
-        nextState.vx += nextState.inv_mass * friction_impulse;
     }
+}
 
+function step(state, action1, action2) {
+    let nextState = JSON.parse(JSON.stringify(state)); 
+    const dt = 1.0 / 60.0;
 
-    // Clear forces
-    nextState.force_x = 0.0;
-    nextState.force_y = 0.0;
-    nextState.torque = 0.0;
+    integratePlayer(nextState.p1, action1, dt);
+    integratePlayer(nextState.p2, action2, dt);
+
+    const walls = [
+        { x1: -10.0, y1: -5.0, x2: 10.0, y2: -5.0 },
+        { x1: 5.0, y1: -5.0, x2: 8.0, y2: 0.0 },
+        { x1: -5.0, y1: -5.0, x2: -8.0, y2: 0.0 }
+    ];
+    resolveWallCollision(nextState.p1, walls);
+    resolveWallCollision(nextState.p2, walls);
+
+    // Player vs Player Collision
+    let dx = nextState.p2.x - nextState.p1.x;
+    let dy = nextState.p2.y - nextState.p1.y;
+    let dist_sq = dx * dx + dy * dy;
+    let min_dist = nextState.p1.radius + nextState.p2.radius;
+
+    if (dist_sq < min_dist * min_dist && dist_sq > 0.0) {
+        let dist = Math.sqrt(dist_sq);
+        let nx = dx / dist;
+        let ny = dy / dist;
+        
+        let penetration = min_dist - dist;
+        let p1_shift = penetration * (nextState.p1.inv_mass / (nextState.p1.inv_mass + nextState.p2.inv_mass));
+        let p2_shift = penetration * (nextState.p2.inv_mass / (nextState.p1.inv_mass + nextState.p2.inv_mass));
+        
+        nextState.p1.x -= nx * p1_shift;
+        nextState.p1.y -= ny * p1_shift;
+        nextState.p2.x += nx * p2_shift;
+        nextState.p2.y += ny * p2_shift;
+
+        let rvx = nextState.p2.vx - nextState.p1.vx;
+        let rvy = nextState.p2.vy - nextState.p1.vy;
+        let vel_along_normal = rvx * nx + rvy * ny;
+
+        if (vel_along_normal < 0.0) {
+            let e = 0.5;
+            let j = -(1.0 + e) * vel_along_normal / (nextState.p1.inv_mass + nextState.p2.inv_mass);
+            let impulse_x = j * nx;
+            let impulse_y = j * ny;
+
+            nextState.p1.vx -= impulse_x * nextState.p1.inv_mass;
+            nextState.p1.vy -= impulse_y * nextState.p1.inv_mass;
+            nextState.p2.vx += impulse_x * nextState.p2.inv_mass;
+            nextState.p2.vy += impulse_y * nextState.p2.inv_mass;
+        }
+    }
 
     nextState.t += 1;
     return nextState;
 }
 
 function generateTraces(numFrames = 100) {
-    // Notice the new fields added here
     let state = { 
-        t: 0, x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, 
-        angle: 0.0, angular_velocity: 0.0,
-        force_x: 0.0, force_y: 0.0, torque: 0.0,
-        mass: 1.0, inv_mass: 1.0, 
-        inertia: 1.0, inv_inertia: 1.0,
-        linear_damping: 0.1, angular_damping: 0.1
+        t: 0, 
+        p1: { x: -2.0, y: 0.0, vx: 0.0, vy: 0.0, angle: 0.0, angular_velocity: 0.0, force_x: 0.0, force_y: 0.0, torque: 0.0, mass: 1.0, inv_mass: 1.0, inertia: 1.0, inv_inertia: 1.0, linear_damping: 0.1, angular_damping: 0.1, radius: 0.5, alive: true },
+        p2: { x: 2.0, y: 0.0, vx: 0.0, vy: 0.0, angle: 0.0, angular_velocity: 0.0, force_x: 0.0, force_y: 0.0, torque: 0.0, mass: 1.0, inv_mass: 1.0, inertia: 1.0, inv_inertia: 1.0, linear_damping: 0.1, angular_damping: 0.1, radius: 0.5, alive: true }
     };
     let traces = [];
 
     for (let i = 0; i < numFrames; i++) {
-        let action = [
-            Math.floor(Math.random() * 3),
-            Math.floor(Math.random() * 3),
-            Math.floor(Math.random() * 2)
-        ];
+        let action1 = [Math.floor(Math.random() * 3), Math.floor(Math.random() * 3), Math.floor(Math.random() * 2)];
+        let action2 = [Math.floor(Math.random() * 3), Math.floor(Math.random() * 3), Math.floor(Math.random() * 2)];
 
-        let nextState = step(state, action);
+        let nextState = step(state, action1, action2);
 
         traces.push({
             seed: 0,
             state: state,
-            action: action,
+            action1: action1,
+            action2: action2,
             next_state: nextState
         });
 
