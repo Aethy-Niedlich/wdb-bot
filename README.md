@@ -1,199 +1,106 @@
 # wdb-bot
 
-**wdb-bot is a work-in-progress PyTorch Reinforcement Learning and Imitation
-Learning bot for the Weird Death Ball (WDB) map in Bonk.io.** It is currently
-an offline training and simulation prototype: the repository does not contain
-a live Bonk.io client integration or a path for controlling a player in an
-online match.
+> **Status:** Early Work in Progress (WIP) — Offline RL/IL training prototype. Please bear with me while it's still learning!
 
-The main training path is Python PPO over a vector of local environments. A
-native Rust extension supplies the environment simulation. Python also has
-behavioral-cloning helpers, while the JavaScript files under `reference/`
-support replay inspection, game-physics experiments, and simulator diagnostics.
-Those pieces are not yet integrated into one end-to-end imitation-learning
-pipeline.
+An **Imitation Learning (IL)** and **Reinforcement Learning (RL)** bot built in PyTorch for the **Weird Death Ball (WDB)** map in [Bonk.io](https://bonk.io). 
 
-## Status and build note
+Currently, `wdb-bot` focuses on offline simulation and policy training. It does not yet include live browser integration or online match control.
 
-The checked-in Rust sources are archived as
-[`rust/src/lib.rs (ARCHIVED).txt`](rust/src/lib.rs%20%28ARCHIVED%29.txt) and
-[`rust/src/physics.rs (ARCHIVED).txt`](rust/src/physics.rs%20%28ARCHIVED%29.txt),
-not at the `.rs` paths expected by Cargo. As a result, a clean native build
-currently fails (`rust/Cargo.toml` expects `rust/src/lib.rs`). There is a
-prebuilt extension at
-[`python/wdb/wdb_engine.cpython-311-x86_64-linux-gnu.so`](python/wdb/wdb_engine.cpython-311-x86_64-linux-gnu.so);
-it is usable with CPython 3.11 on x86-64 Linux, but it is not a portable
-replacement for buildable Rust source.
+---
 
 ## Architecture
 
-```text
-Python training loop (PyTorch)
-  ├─ ActorCritic policy, PPO updates, checkpointing
-  └─ VecEnv: observations, normalization, episode handling, opponents
-       └─ wdb.wdb_engine.RustEnv (PyO3 extension)
-            └─ map loading, physics step, rewards, terminal state
+The project pairs a **PyTorch PPO training loop** with a **Rust PyO3 physics extension** for fast vectorized rollouts, alongside **Node.js reference tools** for inspecting Bonk.io replays and Box2D mechanics.
 
-JavaScript reference tools
-  └─ Bonk.io/Box2D assets, replay experiments, trace and demo inspection
+```text
+Python Training Loop (PyTorch)
+ ├── ActorCritic Policy & PPO Updates (python/wdb/policy.py, main.py)
+ └── VecEnv: 37-dim observations, normalization, opponents (python/wdb/vec_env.py)
+      └── wdb.wdb_engine.RustEnv (PyO3 Native Extension)
+           └── Map loading (WDB_live_map.json), custom physics step, rewards
+
+JavaScript Reference Tools (Node.js)
+ └── Bonk.io / Box2D assets, replay harvesting, determinism & parity checks
 ```
 
-### Python and Rust
+### Core Components
 
-- [`python/wdb/main.py`](python/wdb/main.py) runs PPO training. The current
-  entry point uses 16 environments, stage 0 (player versus the ball, without
-  player 2), 128-step rollouts, and 50 updates. It selects CUDA when available
-  and otherwise uses CPU. These values are currently set in the entry point,
-  rather than exposed as command-line options.
-- [`python/wdb/policy.py`](python/wdb/policy.py) defines a shared multilayer
-  PyTorch actor-critic network. Its four categorical action heads represent
-  movement (3 choices), jump (3), heavy (2), and grapple (2); a critic predicts
-  state value. The action vector is `[move, jump, heavy, grapple]`, with each
-  component represented by its head's class index.
-- [`python/wdb/vec_env.py`](python/wdb/vec_env.py) manages multiple native
-  environments, builds 37-element observations, updates running observation
-  statistics, records episode outcomes, and resets completed episodes. It
-  reads the map from [`WDB_live_map.json`](WDB_live_map.json). In stages with
-  player 2 enabled, it can select random, no-op, or scripted-chaser actions;
-  stage 0, used by the current trainer, supplies a no-op player-2 action.
-- The Rust `RustEnv` extension is imported as `wdb.wdb_engine`. Python loads
-  the map JSON, calls `reset` and `step`, and receives a state dictionary plus
-  reward and done flag. The Rust implementation parses map shapes into walls,
-  advances the simulation, and reports shaping/terminal reward components,
-  player and ball state, grapple information, and termination/truncation
-  fields. The archived Rust implementation is a custom simulation, not a
-  guarantee of exact parity with the live game.
-- [`python/wdb/imitation.py`](python/wdb/imitation.py) contains JSONL replay
-  loading and a behavioral-cloning training helper. Although `main.py` accepts
-  a `--replay` option, it currently does not use it to run behavioral cloning.
-  The helper expects rows with `obs` and `action` arrays; harvested game replay
-  records are not automatically converted to the current normalized
-  37-feature observation format.
-- [`python/wdb/league.py`](python/wdb/league.py) provides policy snapshots,
-  but the current training loop does not use the league to select opponents.
+* **Training Loop ([`python/wdb/main.py`](python/wdb/main.py)):** Runs PPO across 16 parallel environments (currently hardcoded to Stage 0: 1 player vs. ball, 128-step rollouts, 50 updates) using CUDA if available or CPU otherwise.
+* **Policy Network ([`python/wdb/policy.py`](python/wdb/policy.py)):** Shared multilayer actor-critic network outputting four categorical action heads (`[move, jump, heavy, grapple]` with dimensions `[3, 3, 2, 2]`) plus a state-value critic.
+* **Vector Environment ([`python/wdb/vec_env.py`](python/wdb/vec_env.py)):** Loads [`WDB_live_map.json`](WDB_live_map.json), builds normalized 37-feature observations, tracks episode stats, and manages Player 2 behavior (no-op in Stage 0; random or scripted chaser in later stages).
+* **Rust Simulation (`wdb.wdb_engine`):** Custom Box2D-inspired physics engine exposed via PyO3 that handles wall collisions, grapple mechanics, and shaping/terminal rewards.
+* **Imitation & League Helpers ([`imitation.py`](python/wdb/imitation.py), [`league.py`](python/wdb/league.py)):** Scaffolding for behavioral cloning from JSONL replays and self-play policy snapshots (not yet wired into the main training loop).
+* **JS Reference Suite (`reference/`, `scripts/`):** Standalone Node.js utilities for stepping real Bonk.io replays ([`harvest.mjs`](reference/harvest.mjs)), testing determinism ([`gates.mjs`](reference/gates.mjs)), and benchmarking ([`bench.mjs`](reference/bench.mjs)).
 
-The trainer saves a checkpoint named `latest.pt` in its **current working
-directory**. It contains model weights, observation dimension/version metadata,
-and observation-normalization statistics. Run it from the repository root as
-shown below to write `./latest.pt` rather than overwriting the tracked
-[`python/latest.pt`](python/latest.pt) checkpoint.
+---
 
-### JavaScript and reference data
+## Quickstart
 
-The JavaScript assets are for offline reference work, not the Python
-environment's runtime:
+> **Important Build Note:** The Rust source files are currently archived as `.txt` files (`rust/src/lib.rs (ARCHIVED).txt` and `physics.rs (ARCHIVED).txt`), so building from source via Cargo/Maturin will fail until they are restored. However, a **prebuilt Linux x86-64 binary** (`wdb_engine.cpython-311-x86_64-linux-gnu.so`) is included for immediate use.
 
-- [`reference/env.mjs`](reference/env.mjs) loads the Bonk core and Box2D code
-  with browser API shims for Node.js. The large bundled
-  [`reference/bonk-core.mjs`](reference/bonk-core.mjs) and
-  [`reference/Box2DModuleGlMod.js`](reference/Box2DModuleGlMod.js), along with
-  [`reference/SafeTrig.js`](reference/SafeTrig.js), provide the basis for
-  replay and physics experiments.
-- [`reference/harvest.mjs`](reference/harvest.mjs) steps a replay and writes
-  per-player JSONL frames and metadata under `reference/demos/`.
-  [`reference/gates.mjs`](reference/gates.mjs) checks replay determinism,
-  snapshot/resume behavior, and whether stepping one replay affects another.
-  [`reference/bench.mjs`](reference/bench.mjs) benchmarks replay stepping;
-  `harness.mjs` and the `probe_*.mjs`/`probe_*.js` scripts inspect the core and
-  its APIs.
-- [`scripts/record_reference.js`](scripts/record_reference.js) generates
-  synthetic traces for the archived Rust parity workflow. It implements a
-  separate simplified simulation; it is not an authoritative Bonk.io replay
-  or a production training-data exporter.
-- Root-level files such as [`alpha2s.js`](alpha2s.js),
-  [`Box2DModuleGIMod.js`](Box2DModuleGIMod.js), and
-  [`replay.json`](replay.json), as well as the contents of `reference/`, are
-  game/reference bundles or data rather than Python package entry points.
-
-## Setup and run
-
-### Run with the bundled extension
-
-This route applies only to **CPython 3.11 on x86-64 Linux**, matching the
-checked-in extension. You will also need a PyTorch installation compatible
-with your machine; CPU works, and CUDA is optional.
+### 1. Run with the Prebuilt Extension (Linux x86-64, Python 3.11)
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install numpy torch
+pip install --upgrade pip numpy torch
 
-# From the repository root; the map path is resolved from the package.
+# Run from the repository root so checkpoints save to ./latest.pt (gitignored)
+# instead of overwriting the tracked python/latest.pt file
 PYTHONPATH=python python -m wdb.main
 ```
 
-Training prints update/episode statistics and saves `latest.pt` in the
-repository root. That path is ignored by Git. To use the bundled checkpoint
-with the baseline evaluator, run:
+To run the experimental baseline evaluator against your `latest.pt` checkpoint:
 
 ```bash
 PYTHONPATH=python python python/eval_baseline.py
 ```
 
-The evaluator loads `latest.pt` from the current directory. The supplied
-baseline script reports evaluation statistics but is still experimental.
+### 2. Building from Source (Once Rust Sources Are Restored)
 
-### Build the extension from source
-
-The intended build uses Python 3.11+, a Rust stable toolchain, and maturin.
-Once active Rust source files are present at `rust/src/lib.rs` and
-`rust/src/physics.rs`, the repository's packaging configuration can build and
-install the extension with:
+If you restore `rust/src/lib.rs` and `rust/src/physics.rs` on any platform with a stable Rust toolchain:
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install numpy torch maturin
-python -m pip install ./python
+pip install numpy torch maturin
+pip install ./python
 ```
 
-**This source-build procedure does not work with the current checkout** until
-the archived Rust sources are restored to the paths expected by Cargo. The
-bundled binary only covers the CPython 3.11 Linux x86-64 ABI; other Python
-versions and platforms need a successful native build.
+---
 
-## Reference tools
+## Reference & Replay Tools
 
-Node.js is used for the JavaScript reference scripts; CI specifies Node 20.
-There is no JavaScript package manifest or npm dependency-install step.
+The JavaScript utilities require **Node.js (v20+)** and run with zero external npm dependencies:
 
 ```bash
-# Generate synthetic reference traces (writes reference/frames.jsonl).
-node scripts/record_reference.js
-
-# Harvest replay frames (optional args: fps, substeps, replay JSON path).
+# Harvest per-player JSONL frames from a Bonk.io replay
 node reference/harvest.mjs 30 1 reference/replays/321746.json
 
-# Run the replay determinism/snapshot checks with the default fixtures.
+# Verify replay determinism and snapshot/resume behavior
 node reference/gates.mjs
 
-# Benchmark replay stepping (optional args: environment count, ticks, replay).
+# Benchmark replay stepping speed (envs, ticks, replay path)
 node reference/bench.mjs 8 500 reference/replays/321746.json
+
+# Generate synthetic traces for Rust parity testing
+node scripts/record_reference.js
 ```
 
-Harvested frames are exploratory data and are not directly consumable by the
-current Python behavioral-cloning helper without preprocessing.
+---
 
-## Tests and known gaps
+## Current Limitations & Roadmap
 
-Python tests are under [`python/tests/`](python/tests) and the additional
-diagnostic scripts are directly under `python/`. Rust/extension tests and
-parity checks are configured in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-The current checkout is not in a state where that clean-source CI path can
-pass: Cargo cannot find `rust/src/lib.rs`, and
-[`python/tests/test_parity.py`](python/tests/test_parity.py) calls a
-`step_json` extension method that the archived `RustEnv` source does not
-provide. The prebuilt extension does provide the `reset`, `load_map`, and
-`step` methods used by the current vector environment.
+* [x] Custom Rust simulation & prebuilt CPython 3.11 extension (`wdb_engine`)
+* [x] Stage-0 PPO training loop (solo ball survival/control)
+* [x] Node.js replay harvesting and determinism verification (`reference/`)
+* [ ] Restore active `.rs` files in `rust/src/` for cross-platform builds and CI parity
+* [ ] Unify data schemas to convert harvested JS replay frames into normalized 37-dim observations
+* [ ] Wire `--replay` behavioral cloning and `league.py` self-play opponents into `main.py`
+* [ ] Live browser/client bridge for testing in online Bonk.io matches
 
-Other current limitations:
+---
 
-- The training loop is an experimental stage-0 PPO run, not a finished
-  competitive or online bot.
-- The `--replay` flag and league opponent pool are not wired into the training
-  loop; behavioral cloning is helper-level functionality only.
-- JavaScript replay frames, synthetic Rust parity traces, and Python's
-  normalized observations have different schemas and should not be treated as
-  interchangeable datasets.
+## Contributing & Disclaimer
+
+**Contributing:** Since this project is in early active development, APIs, observation schemas, and simulation physics are still evolving. Feel free to open an issue or submit a pull request if you want to help restore the cross-platform Rust build, unify replay schemas, or experiment with reward shaping!
+
+**Disclaimer:** `wdb-bot` is an independent research and hobby project built for educational purposes. It is not affiliated with or endorsed by Bonk.io, and it is strictly intended for offline simulation and local experimentation.
