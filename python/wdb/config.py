@@ -10,14 +10,6 @@ class ObsConfig:
     RAY_STACK: int = 4
     META_DIM: int = 5
 
-    @property
-    def obs_dim(self) -> int:
-        per_frame = self.SELF_DIM + self.OPP_DIM
-        history = per_frame * len(self.HISTORY_OFFSETS)
-        buttons = 3 * self.BUTTON_HISTORY
-        rays = self.N_RAYS * self.RAY_STACK
-        return history + buttons + rays + self.META_DIM
-
 @dataclass
 class TrainConfig:
     n_envs: int = 512
@@ -45,5 +37,5 @@ class TrainConfig:
 class Config:
     obs: ObsConfig = field(default_factory=ObsConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
-    # CHANGED: Added the 4th action (grapple)
+    # REVERTED TO 4 ACTIONS
     action_dims: tuple = (3, 3, 2, 2) 

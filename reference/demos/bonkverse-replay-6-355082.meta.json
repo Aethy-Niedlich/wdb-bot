@@ -1,0 +1,13 @@
+{
+ "tag": "bonkverse-replay-6-355082",
+ "mid": 80622,
+ "rl_start": 95,
+ "ticks": 371,
+ "stop": "round decided at tick 354",
+ "decision_tick": 354,
+ "round_length": 450,
+ "frames": {
+  "1": 355,
+  "7": 355
+ }
+}

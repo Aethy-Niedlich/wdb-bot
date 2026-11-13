@@ -10,7 +10,6 @@ class ActorCritic(nn.Module):
             nn.Linear(hidden, hidden), nn.SiLU(),
             nn.Linear(hidden, hidden), nn.SiLU(),
         )
-        # CHANGED: 4 heads now
         self.actor_heads = nn.ModuleList([nn.Linear(hidden, d) for d in action_dims])
         self.critic = nn.Linear(hidden, 1)
 
@@ -33,5 +32,5 @@ class ActorCritic(nn.Module):
         logits, value = self.forward(obs)
         dists = [torch.distributions.Categorical(logits=l) for l in logits]
         logp = sum(d.log_prob(actions[:, i]) for i, d in enumerate(dists))
-        entropy = sum(d.entropy() for d in dists)
-        return logp, entropy, value
+        entropies = [d.entropy() for d in dists]
+        return logp, entropies, value

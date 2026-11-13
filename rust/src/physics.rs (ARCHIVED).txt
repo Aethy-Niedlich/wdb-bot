@@ -1,0 +1,316 @@
+use serde::{Serialize, Deserialize};
+use serde_json::Value;
+
+pub const SCALE: f64 = 6.81;
+pub const GRAVITY: f64 = -10.0 / SCALE;
+pub const GAMMA: f64 = 0.99;
+pub const FLOOR_Y: f64 = 0.0;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Player {
+    pub x: f64, pub y: f64, pub vx: f64, pub vy: f64,
+    pub angle: f64, pub angular_velocity: f64,
+    pub force_x: f64, pub force_y: f64, pub torque: f64,
+    pub mass: f64, pub inv_mass: f64, pub inertia: f64, pub inv_inertia: f64,
+    pub linear_damping: f64, pub angular_damping: f64,
+    pub radius: f64, pub alive: bool,
+    pub grapple_attached: bool, pub anchor_x: f64, pub anchor_y: f64, pub rope_length: f64,
+    pub has_attached_ball: bool,
+    pub is_causal_win: bool,
+}
+
+impl Player {
+    pub fn new(x: f64, y: f64) -> Self {
+        Self {
+            x, y, vx: 0.0, vy: 0.0, angle: 0.0, angular_velocity: 0.0,
+            force_x: 0.0, force_y: 0.0, torque: 0.0,
+            mass: 1.0, inv_mass: 1.0, inertia: 1.0, inv_inertia: 1.0,
+            linear_damping: 0.01, angular_damping: 3.4,
+            radius: 2.0, alive: true,
+            grapple_attached: false, anchor_x: 0.0, anchor_y: 0.0, rope_length: 0.0,
+            has_attached_ball: false,
+            is_causal_win: false,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Ball {
+    pub x: f64, pub y: f64, pub vx: f64, pub vy: f64,
+    pub radius: f64, pub exists: bool,
+    pub last_touch_p1: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GameState {
+    pub t: u64,
+    pub p1: Player, pub p2: Player, pub ball: Ball,
+    pub current_reward: f64,
+    pub reward_shaping: f64, pub reward_terminal: f64, pub reward_attach: f64,
+    pub phi: f64,
+    pub spawn_success: bool,
+    pub map_radius: f64, pub map_center_x: f64, pub map_center_y: f64,
+    pub goal_x: f64, pub goal_y: f64,
+    pub terminated: bool, pub truncated: bool,
+    pub stage: u8,
+    pub walls: Vec<Wall>, 
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Wall { pub x1: f64, pub y1: f64, pub x2: f64, pub y2: f64 }
+
+impl GameState {
+    pub fn reset(_seed: u64, stage: u8, map_json: &str) -> Self {
+        let mut state = Self { 
+            t: 0, p1: Player::new(0.0, 0.0), p2: Player::new(100.0 / SCALE, 212.5 / SCALE), 
+            ball: Ball { x: 0.0, y: 16.22, vx: 0.0, vy: 0.0, radius: 1.04, exists: true, last_touch_p1: false },
+            current_reward: 0.0, reward_shaping: 0.0, reward_terminal: 0.0, reward_attach: 0.0,
+            phi: 0.0, spawn_success: false,
+            map_radius: 100.0, map_center_x: 0.0, map_center_y: 0.0, 
+            goal_x: 750.0 / SCALE, goal_y: 0.0,
+            terminated: false, truncated: false, stage, walls: vec![],
+        };
+
+        state.load_map(map_json);
+        if stage == 0 { state.p2.alive = false; }
+
+        let p1_spawn_x = -100.0 / SCALE; let p1_spawn_y = 212.5 / SCALE;
+        let ball_spawn_x = if stage == 0 { p1_spawn_x + 15.0 } else { 0.0 };
+        let ball_spawn_y = if stage == 0 { p1_spawn_y + 5.0 } else { 16.22 };
+        state.ball.x = ball_spawn_x; state.ball.y = ball_spawn_y;
+
+        if stage == 0 {
+            let mut best_px = p1_spawn_x; let mut best_py = p1_spawn_y;
+            for i in 0..20 {
+                let d = 6.0 + (i as f64) * 0.5;
+                let angle = (i as f64) * 0.7;
+                let px = ball_spawn_x + d * angle.cos();
+                let py = ball_spawn_y + d * angle.sin();
+                let test_p = Player::new(px, py);
+                let (_, _, is_ball) = get_closest_wall_point(&test_p, &state.ball, &state.walls);
+                if is_ball {
+                    best_px = px; best_py = py; state.spawn_success = true; break;
+                }
+            }
+            state.p1.x = best_px; state.p1.y = best_py;
+        } else {
+            state.p1.x = p1_spawn_x; state.p1.y = p1_spawn_y;
+        }
+
+        state.phi = calculate_phi_geo(&state.p1, state.map_center_x, state.map_center_y, state.map_radius) + calculate_phi_reach(&state.p1, &state.ball) + calculate_phi_goal(&state.ball, state.goal_x, state.goal_y, state.map_radius);
+        state
+    }
+    
+    pub fn load_map(&mut self, json_str: &str) {
+        self.walls.clear();
+        if let Ok(v) = serde_json::from_str::<Value>(json_str) {
+            if let Some(shapes) = v["physics"]["shapes"].as_array() {
+                for shape in shapes {
+                    if shape["type"] == "bx" {
+                        let w = shape["w"].as_f64().unwrap_or(0.0) / SCALE; 
+                        let h = shape["h"].as_f64().unwrap_or(0.0) / SCALE;
+                        if w < 3.0 && h < 3.0 { continue; } 
+                        let cx = shape["c"][0].as_f64().unwrap_or(0.0) / SCALE;
+                        let cy = shape["c"][1].as_f64().unwrap_or(0.0) / SCALE;
+                        if cx.abs() < 1.0 && h > 100.0 { continue; } 
+                        let angle = shape["a"].as_f64().unwrap_or(0.0);
+                        let cos = angle.cos(); let sin = angle.sin();
+                        let corners = [ (-w, -h), (w, -h), (w, h), (-w, h) ].map(|(x, y)| (cx + x*cos - y*sin, cy + x*sin + y*cos));
+                        for i in 0..4 {
+                            let next = (i + 1) % 4;
+                            self.walls.push(Wall { x1: corners[i].0, y1: corners[i].1, x2: corners[next].0, y2: corners[next].1 });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn reward(&self) -> f64 { self.current_reward }
+    pub fn is_done(&self) -> bool { self.terminated || self.truncated }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Inputs { pub move_dir: i8, pub jump_dir: i8, pub heavy: bool, pub grapple: bool }
+
+fn calculate_phi_geo(p: &Player, cx: f64, cy: f64, r: f64) -> f64 {
+    let d = ((p.x - cx).powi(2) + (p.y - cy).powi(2)).sqrt();
+    let m = ((r - d) / r).clamp(-1.0, 1.0); 
+    f64::min(0.0, m - 0.2)
+}
+
+fn calculate_phi_reach(p: &Player, ball: &Ball) -> f64 {
+    if !ball.exists { return 0.0; }
+    let d_ab = ((p.x - ball.x).powi(2) + (p.y - ball.y).powi(2)).sqrt() - p.radius - ball.radius;
+    -2.0 * ((d_ab - 0.8 * (201.0 / SCALE)) / 100.0).clamp(0.0, 1.0)
+}
+
+fn calculate_phi_goal(ball: &Ball, goal_x: f64, goal_y: f64, l: f64) -> f64 {
+    if !ball.exists { return 0.0; }
+    // N2 FIX: Restore clamp
+    -1.0 * (((ball.x - goal_x).powi(2) + (ball.y - goal_y).powi(2)).sqrt() / l).clamp(0.0, 1.0)
+}
+
+fn integrate_player(p: &mut Player, inputs: &Inputs, dt: f64) {
+    p.force_x = (inputs.move_dir as f64) * 50.0;
+    p.force_y = (inputs.jump_dir as f64) * 50.0;
+    p.vx += dt * (p.inv_mass * p.force_x);
+    p.vy += dt * (GRAVITY + p.inv_mass * p.force_y); 
+    let damp = (1.0 - dt * p.linear_damping).clamp(0.0, 1.0);
+    let ang_damp = (1.0 - dt * p.angular_damping).clamp(0.0, 1.0);
+    p.vx *= damp; p.vy *= damp; p.angular_velocity *= ang_damp;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.angle += p.angular_velocity * dt;
+    p.force_x = 0.0; p.force_y = 0.0;
+}
+
+fn integrate_ball(b: &mut Ball, dt: f64) {
+    if !b.exists { return; }
+    b.vy += dt * GRAVITY; 
+    b.x += b.vx * dt; b.y += b.vy * dt;
+}
+
+fn resolve_wall_collision(x: &mut f64, y: &mut f64, vx: &mut f64, vy: &mut f64, radius: f64, walls: &Vec<Wall>) {
+    for wall in walls {
+        let ab_x = wall.x2 - wall.x1; let ab_y = wall.y2 - wall.y1;
+        let ap_x = *x - wall.x1; let ap_y = *y - wall.y1;
+        let ab_len_sq = ab_x * ab_x + ab_y * ab_y;
+        let mut t = (ap_x * ab_x + ap_y * ab_y) / ab_len_sq;
+        t = t.clamp(0.0, 1.0);
+        let cx = wall.x1 + t * ab_x; let cy = wall.y1 + t * ab_y;
+        let dx = *x - cx; let dy = *y - cy;
+        let dist_sq = dx * dx + dy * dy;
+        if dist_sq < radius * radius {
+            let dist = dist_sq.sqrt();
+            let nx = if dist > 0.0 { dx / dist } else { 0.0 };
+            let ny = if dist > 0.0 { dy / dist } else { 1.0 };
+            *x += nx * (radius - dist); *y += ny * (radius - dist);
+            let vn = *vx * nx + *vy * ny;
+            if vn < 0.0 { *vx -= 1.2 * vn * nx; *vy -= 1.2 * vn * ny; }
+        }
+    }
+}
+
+pub fn get_closest_wall_point(p: &Player, ball: &Ball, walls: &Vec<Wall>) -> (f64, f64, bool) {
+    let mut best_dist_sq = f64::MAX; let mut best_x = 0.0; let mut best_y = 0.0; let mut is_ball = false;
+    for wall in walls {
+        let ab_x = wall.x2 - wall.x1; let ab_y = wall.y2 - wall.y1;
+        let ap_x = p.x - wall.x1; let ap_y = p.y - wall.y1;
+        let ab_len_sq = ab_x * ab_x + ab_y * ab_y;
+        let mut t = (ap_x * ab_x + ap_y * ab_y) / ab_len_sq; t = t.clamp(0.0, 1.0);
+        let cx = wall.x1 + t * ab_x; let cy = wall.y1 + t * ab_y;
+        let dist_sq = (p.x - cx).powi(2) + (p.y - cy).powi(2);
+        if dist_sq < best_dist_sq { best_dist_sq = dist_sq; best_x = cx; best_y = cy; is_ball = false; }
+    }
+    if ball.exists {
+        let dist_sq = (p.x - ball.x).powi(2) + (p.y - ball.y).powi(2);
+        if dist_sq < best_dist_sq {
+            best_dist_sq = dist_sq;
+            let dist = dist_sq.sqrt();
+            let nx = if dist > 0.0 { (p.x - ball.x) / dist } else { 0.0 };
+            let ny = if dist > 0.0 { (p.y - ball.y) / dist } else { 1.0 };
+            best_x = ball.x + nx * ball.radius; best_y = ball.y + ny * ball.radius; is_ball = true;
+        }
+    }
+    (best_x, best_y, is_ball)
+}
+
+fn resolve_grapple(p: &mut Player, ball: &mut Ball, inputs: &Inputs, walls: &Vec<Wall>, dt: f64) -> f64 {
+    let max_grapple_range = 201.0 / SCALE; 
+    let mut reward = 0.0;
+    
+    if inputs.grapple && !p.grapple_attached {
+        let (ax, ay, is_ball) = get_closest_wall_point(p, ball, walls);
+        let distance = ((p.x - ax).powi(2) + (p.y - ay).powi(2)).sqrt();
+        if distance <= max_grapple_range {
+            p.anchor_x = ax; p.anchor_y = ay; p.rope_length = distance; p.grapple_attached = true;
+            if is_ball && !p.has_attached_ball { p.has_attached_ball = true; reward += 3.0; }
+            
+            // N1 FIX: jump_dir == 1 (remapped from action2[1] - 1)
+            if !is_ball && ay < -60.0 / SCALE { 
+                let mut boost = 150.0 / SCALE; 
+                if inputs.heavy { boost += 200.0 / SCALE; }
+                if inputs.jump_dir == 1 { boost += 100.0 / SCALE; }
+                p.vy += boost; 
+            }
+        }
+    } else if !inputs.grapple { p.grapple_attached = false; }
+
+    if p.grapple_attached {
+        let is_anchored_to_ball = ((p.anchor_x - ball.x).powi(2) + (p.anchor_y - ball.y).powi(2)).sqrt() < ball.radius + 1.0;
+        if is_anchored_to_ball && ball.exists { p.anchor_x = ball.x; p.anchor_y = ball.y; }
+        let dx = p.x - p.anchor_x; let dy = p.y - p.anchor_y;
+        let dist = (dx * dx + dy * dy).sqrt();
+        if dist > 0.0 {
+            let nx = dx / dist; let ny = dy / dist;
+            let omega = 2.0 * std::f64::consts::PI * 2.0;
+            let k = omega * omega; let c = 2.0 * 0.0 * omega; 
+            let v_along_rope = p.vx * nx + p.vy * ny;
+            
+            let f_spring = if dist > p.rope_length { k * (p.rope_length - dist) + c * v_along_rope } else { 0.0 };
+            
+            p.vx += p.inv_mass * f_spring * nx * dt;
+            p.vy += p.inv_mass * f_spring * ny * dt;
+            
+            if is_anchored_to_ball && ball.exists && f_spring < 0.0 {
+                ball.vx -= 5.0 * f_spring * nx * dt; 
+                ball.vy -= 5.0 * f_spring * ny * dt;
+            }
+        }
+    }
+    reward
+}
+
+pub fn step(state: &mut GameState, inputs1: &Inputs, inputs2: &Inputs) {
+    let dt = 1.0 / 60.0;
+    
+    let phi_t = state.phi;
+
+    integrate_player(&mut state.p1, inputs1, dt);
+    if state.stage > 0 { integrate_player(&mut state.p2, inputs2, dt); }
+    integrate_ball(&mut state.ball, dt);
+
+    let eps = 0.02;
+    if state.ball.exists {
+        if ((state.ball.x - state.p1.x).powi(2) + (state.ball.y - state.p1.y).powi(2)).sqrt() <= state.ball.radius + state.p1.radius + eps { state.p1.alive = false; }
+        if state.stage > 0 && ((state.ball.x - state.p2.x).powi(2) + (state.ball.y - state.p2.y).powi(2)).sqrt() <= state.ball.radius + state.p2.radius + eps { state.p2.alive = false; }
+    }
+
+    resolve_wall_collision(&mut state.p1.x, &mut state.p1.y, &mut state.p1.vx, &mut state.p1.vy, state.p1.radius, &state.walls);
+    if state.stage > 0 { resolve_wall_collision(&mut state.p2.x, &mut state.p2.y, &mut state.p2.vx, &mut state.p2.vy, state.p2.radius, &state.walls); }
+    resolve_wall_collision(&mut state.ball.x, &mut state.ball.y, &mut state.ball.vx, &mut state.ball.vy, state.ball.radius, &state.walls);
+    
+    let mut step_reward = 0.0;
+    step_reward += resolve_grapple(&mut state.p1, &mut state.ball, inputs1, &state.walls, dt);
+    if state.stage > 0 { resolve_grapple(&mut state.p2, &mut state.ball, inputs2, &state.walls, dt); }
+
+    if state.ball.exists {
+        if ((state.ball.x - state.goal_x).powi(2) + (state.ball.y - state.goal_y).powi(2)).sqrt() < 2.0 / SCALE {
+            state.ball.exists = false;
+            if state.ball.last_touch_p1 { state.p1.is_causal_win = true; }
+        }
+    }
+
+    let kill_y = -100.0 / SCALE;
+    if state.p1.y < kill_y { state.p1.alive = false; }
+    if state.stage > 0 && state.p2.y < kill_y { state.p2.alive = false; }
+    
+    state.terminated = !state.p1.alive || (state.stage == 0 && !state.ball.exists) || (state.stage > 0 && !state.p2.alive);
+    state.truncated = state.t >= 300 && !state.terminated;
+
+    state.phi = if state.terminated { 0.0 } else { 
+        calculate_phi_geo(&state.p1, state.map_center_x, state.map_center_y, state.map_radius) 
+        + calculate_phi_reach(&state.p1, &state.ball) + calculate_phi_goal(&state.ball, state.goal_x, state.goal_y, state.map_radius) 
+    };
+    
+    let shaping = GAMMA * state.phi - phi_t;
+    let mut terminal = 0.0;
+    if !state.p1.alive { terminal = -10.0; } 
+    else if state.stage > 0 && !state.p2.alive { terminal = if state.p1.is_causal_win { 100.0 } else { 1.0 }; }
+    else if state.stage == 0 && !state.ball.exists { terminal = 100.0; }
+
+    state.current_reward = shaping + terminal + step_reward;
+    state.reward_shaping = shaping;
+    state.reward_terminal = terminal;
+    state.reward_attach = step_reward;
+    state.t += 1;
+}
