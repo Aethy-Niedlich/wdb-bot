@@ -1,0 +1,18 @@
+{
+ "tag": "replay",
+ "mid": 955838,
+ "source": "reference",
+ "rl_start": 968,
+ "ftu0": -1,
+ "ticks": 445,
+ "stop": "round decided at tick 312",
+ "decision_tick": 312,
+ "round_length": 1281,
+ "frames": {
+  "14": 313,
+  "74": 313,
+  "80": 313,
+  "82": 313,
+  "83": 159
+ }
+}

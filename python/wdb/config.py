@@ -2,34 +2,43 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ObsConfig:
-    SELF_DIM: int = 14
-    OPP_DIM: int = 19
-    HISTORY_OFFSETS: tuple = (0, 1, 3, 7, 15, 30, 60)
-    BUTTON_HISTORY: int = 7
-    N_RAYS: int = 16
-    RAY_STACK: int = 4
-    META_DIM: int = 5
+    # obs.v1 schema (Qwen's layout)
+    SCHEMA_ID: str = "obs.v1"
+    EGO_DIM: int = 17
+    ENTITY_FEAT: int = 11
+    N_ENTITIES: int = 2
+    HAZARD_DIM: int = 2
+    RAYS: int = 24
+    RAY_CHANNELS: int = 3
+    GRAPPLE_DIM: int = 5
+    CONTEXT_DIM: int = 4
+    TOTAL_DIM: int = 122
 
 @dataclass
 class TrainConfig:
-    n_envs: int = 512
+    # Bridge / Env
+    W: int = 2                      # Node workers
+    K: int = 8                      # envs per worker (total = W*K)
+    
+    # PPO Hyperparams
     rollout_steps: int = 128
-    gamma: float = 0.99
-    gae_lambda: float = 0.95
+    gae_lambda: float = 0.97        # Qwen: lambda=0.97
     clip_eps: float = 0.2
     value_coef: float = 0.5
     entropy_coef: float = 0.01
     lr: float = 3e-4
     epochs: int = 4
-    minibatch: int = 4096
+    batch_size: int = 256
     max_grad_norm: float = 0.5
-    fraction_self: float = 1/3
-    fraction_past: float = 1/3
-    fraction_exploiter: float = 1/3
-    snapshot_every_updates: int = 25
-    past_pool_size: int = 20
-    bc_epochs: int = 5
-    bc_lr: float = 1e-3
+    
+    # Gamma Schedule
+    gamma_entry: float = 0.995      # Start at BC->PPO entry
+    gamma_stage_1v1: float = 0.9989
+    gamma_stage_teams: float = 0.9993
+    gamma_transition_updates: int = 10
+    
+    # Action / Checkpoint
+    n_actions: int = 32             # Fixed capacity
     seed: int = 0
     device: str = "cuda"
 
@@ -37,5 +46,3 @@ class TrainConfig:
 class Config:
     obs: ObsConfig = field(default_factory=ObsConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
-    # REVERTED TO 4 ACTIONS
-    action_dims: tuple = (3, 3, 2, 2) 

@@ -1,7 +1,9 @@
 {
  "tag": "bonkverse-replay-6-355053",
  "mid": 80622,
+ "source": "reference",
  "rl_start": 362,
+ "ftu0": -1,
  "ticks": 406,
  "stop": "end-of-clip",
  "decision_tick": null,

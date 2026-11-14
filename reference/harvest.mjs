@@ -40,11 +40,13 @@ const isB2 = x => x && typeof x === 'object' && (x.Common || x.Dynamics);
 box2d = isB2(box2d) ? box2d : isB2(globalThis.Box2D) ? globalThis.Box2D : isB2(amd) ? amd : amd;
 const bonk = (await import('./bonk-core.mjs')).createBonkCore(box2d, { thumbScale: 1 });
 
-// ---------- args: fps, substeps, replay path ----------
+// ---------- args: fps, substeps, replay path, source ----------
 const FPS = Number(process.argv[2] || 30);
 const SUB = Number(process.argv[3] || 1);
 const REPLAY_PATH = process.argv[4] || new URL('../replay.json', import.meta.url).pathname;
 const TAG = REPLAY_PATH.split('/').pop().replace(/\.json$/, '');
+// Q2: provenance tag. Default inference from path; explicit arg overrides.
+const SOURCE = process.argv[5] || (REPLAY_PATH.includes('/own/') ? 'own' : 'reference');
 const replay = JSON.parse(fs.readFileSync(REPLAY_PATH, 'utf8'));
 
 // ---------- decoder (verified against the game's halfUnserialize) ----------
@@ -73,6 +75,8 @@ const step = bonk.Physics.prototype.step, N = byTick.length;
 const slots = replay.startingState.discs.map((d,i) => d ? i : null).filter(v => v !== null);
 const demos = {}; for (const s of slots) demos[s] = [];
 let state = replay.startingState, stop = 'end-of-clip', unlabelled = 0;
+// Q1: anchor — createNewState sets ftu=60 (o flag), 5 (r flag), 90 (neither, our resets).
+const ftu0 = state.ftu;
 const held = [];
 const at = t => { if (byTick[t]) for (const k in byTick[t]) held[k] = byTick[t][k]; return held; };
 
@@ -85,10 +89,20 @@ for (let t = 0; t < N; t++) {
   for (const s of slots) {
     const d = state.discs[s]; if (!d) continue;
     const act = inp[s] || null; if (!act) unlabelled++;
-    demos[s].push({ t, rl: state.rl,
-      obs:{ x:d.x, y:d.y, vx:d.xv, vy:d.yv, a:d.a, av:d.av, a1a:d.a1a, lhid:d.lhid, lht:d.lht, swing:d.swing||null },
-      act, ball, scores: state.scores, capZones: state.capZones,
-      others: state.discs.map((o,i) => (o && i !== s) ? { i, x:o.x, y:o.y, vx:o.xv, vy:o.yv, team:o.team } : null).filter(Boolean) });
+    demos[s].push({
+      t,
+      rl: state.rl,
+      ftu: state.ftu,           // Q1: input state's ftu; mask iff > -1
+      team: d.team,             // Q2: ego team for score context
+      obs: { x:d.x, y:d.y, vx:d.xv, vy:d.yv, a:d.a, av:d.av, a1a:d.a1a,
+             lhid:d.lhid, lht:d.lht, swing:d.swing||null },
+      act, ball,
+      scores: state.scores,
+      capZones: state.capZones,
+      others: state.discs.map((o,i) => (o && i !== s)
+              ? { i, x:o.x, y:o.y, vx:o.xv, vy:o.yv, team:o.team }
+              : null).filter(Boolean),
+    });
   }
   state = step.call(bonk.Physics, state, inp, replay.adminInputs?.[t] || null, FPS, replay.gameSettings, SUB);
   if (!state || !state.discs) { stop = `state ended at tick ${t}`; break; }
@@ -105,10 +119,16 @@ for (const s of slots) {
 const dm = stop.match(/tick (\d+)/);
 const decision = dm ? +dm[1] : null;
 fs.writeFileSync(new URL(`./demos/${TAG}.meta.json`, import.meta.url), JSON.stringify({
-  tag: TAG, mid: replay.mid, rl_start: replay.startingState.rl, ticks: N, stop,
+  tag: TAG,
+  mid: replay.mid,
+  source: SOURCE,             // Q2: 'own' | 'reference'
+  rl_start: replay.startingState.rl,
+  ftu0: ftu0,                 // Q1: sanity anchor (90 = clean reset, 60/5 = o/r flags)
+  ticks: N,
+  stop,
   decision_tick: decision,
   round_length: decision != null ? replay.startingState.rl + decision + 1 : null,
   frames: Object.fromEntries(slots.map(s => [s, demos[s].length]))
 }, null, 1));
-console.log(`${TAG} | mid=${replay.mid} fps=${FPS} sub=${SUB} | events=${count} ticks=${N} ball=${ballIdx} | stop: ${stop}`);
+console.log(`${TAG} | mid=${replay.mid} source=${SOURCE} fps=${FPS} sub=${SUB} | events=${count} ticks=${N} ball=${ballIdx} ftu0=${ftu0} | stop: ${stop}`);
 console.log(`  frames: ${slots.map(s => `${s}:${demos[s].length}`).join(' ')} | total ${total} | unlabelled ${unlabelled}`);
